@@ -1,0 +1,210 @@
+{
+  "manifest_version": "1.0.0",
+  "pipeline_version": "0.1.0",
+  "keypoint_source": "yolo11n-pose",
+  "families": {
+    "physical_instability": {
+      "cues": [
+        {
+          "code": "near_fall",
+          "source": "heuristic",
+          "module": "fall_detection",
+          "sub_path": "dynamic",
+          "status": "demo_ready",
+          "confidence_range": [0.45, 0.95],
+          "emit_threshold": 0.50,
+          "score_description": "Composite of body-angle depth into danger zone [20–60 deg] + rapid-tilt flag + instability signal count (arms raised, CoM off base)."
+        },
+        {
+          "code": "lying_or_collapsed",
+          "source": "heuristic",
+          "module": "fall_detection",
+          "sub_path": "geometry_or_surface_rest",
+          "status": "demo_ready",
+          "confidence_range": [0.45, 0.95],
+          "emit_threshold": 0.50,
+          "score_description": "Geometry path: lying_score (0–3+) + number of secondary signals (vspan, joints-y, aspect-ratio). Surface-rest path: inverse head-stillness variance."
+        },
+        {
+          "code": "head_drop",
+          "source": "heuristic",
+          "module": "head_drop",
+          "status": "demo_ready",
+          "confidence_range": [0.45, 1.0],
+          "emit_threshold": 0.45,
+          "score_description": "0.45 base when shoulder-width collapses (head-on profile). +0.35 when nose-Y drops below shoulder level. +0.20 when nose-Y drops over the window (temporal change signal)."
+        },
+        {
+          "code": "slumped_posture",
+          "source": "heuristic",
+          "module": "slumped_posture",
+          "status": "demo_ready",
+          "confidence_range": [0.45, 0.90],
+          "emit_threshold": 0.45,
+          "score_description": "Fraction of 4-s window frames where shoulder/hip width ratio < 0.75 AND spine angle > 20 deg. Scaled: [min_hit_ratio → 1.0] maps to [0.45 → 0.90]."
+        },
+        {
+          "code": "leaning_on_surface_or_person",
+          "source": "heuristic",
+          "module": "leaning",
+          "status": "demo_ready",
+          "confidence_range": [0.45, 0.90],
+          "emit_threshold": 0.45,
+          "score_description": "Fraction of window frames where lateral torso offset / torso height > 0.25 AND torso angle > 20 deg, gated by low movement (<1.5% frame diagonal/frame)."
+        },
+        {
+          "code": "stumble_recover",
+          "source": "posec3d",
+          "module": "posec3d_inference",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.35,
+          "score_description": "Sigmoid output from PoseC3D-S multi-label head over 60-frame (2 s) skeleton volume."
+        },
+        {
+          "code": "not_visible_enough",
+          "source": "heuristic",
+          "module": "scene_quality",
+          "emit_as": "context_hint",
+          "context_hint_code": "lighting_poor",
+          "status": "demo_ready",
+          "emit_threshold": null,
+          "score_description": "Emitted as context_hint:lighting_poor when composite visibility score < 0.40 (brightness, contrast, Laplacian blur)."
+        },
+        {
+          "code": "stagger_walk",
+          "source": null,
+          "module": null,
+          "status": "rd",
+          "emit_threshold": null,
+          "score_description": "Not yet implemented. Planned: gait periodicity + lateral sway amplitude over rolling window."
+        },
+        {
+          "code": "swaying",
+          "source": null,
+          "module": null,
+          "status": "rd",
+          "emit_threshold": null,
+          "score_description": "Not yet implemented. Planned: low-frequency lateral CoM oscillation via keypoint trajectory FFT."
+        },
+        {
+          "code": "spill_drop_object",
+          "source": null,
+          "module": null,
+          "status": "not_covered",
+          "emit_threshold": null,
+          "score_description": "Out of scope v1. Requires object detection (cup/glass). Can be added as a separate module."
+        },
+        {
+          "code": "steady_walk",
+          "source": null,
+          "module": null,
+          "status": "not_emitted",
+          "emit_threshold": null,
+          "score_description": "Implicit negative class. We do not emit steady_walk — its absence is assumed when no physical_instability cue fires."
+        }
+      ]
+    },
+    "aggressive_interaction": {
+      "cues": [
+        {
+          "code": "fast_approach",
+          "source": "heuristic",
+          "module": "fast_approach",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.40,
+          "score_description": "Composite of pair-velocity (normalised to frame diagonal/s), distance-decrease ratio, and cosine alignment toward target. Velocity threshold: ~10% frame-diagonal/s."
+        },
+        {
+          "code": "crowd_convergence",
+          "source": "heuristic",
+          "module": "crowd_convergence",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.40,
+          "score_description": "DBSCAN cluster + distance-decrease ratio (baseline vs current avg pairwise dist) + fraction of velocity vectors pointing inward. Score = 0.45×(1-dist_ratio) + 0.35×alignment_frac + 0.20×crowd_size_score."
+        },
+        {
+          "code": "aggressive_posture",
+          "source": "posec3d",
+          "module": "posec3d_inference",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.35,
+          "score_description": "Sigmoid output from PoseC3D-S multi-label head."
+        },
+        {
+          "code": "push_shove",
+          "source": "posec3d",
+          "module": "posec3d_inference",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.35,
+          "score_description": "Sigmoid output from PoseC3D-S multi-label head."
+        },
+        {
+          "code": "swing_attempt",
+          "source": "posec3d",
+          "module": "posec3d_inference",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.35,
+          "score_description": "Sigmoid output from PoseC3D-S multi-label head."
+        },
+        {
+          "code": "grapple_clinch",
+          "source": "posec3d",
+          "module": "posec3d_inference",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.35,
+          "score_description": "Sigmoid output from PoseC3D-S multi-label head."
+        },
+        {
+          "code": "person_falls_after_contact",
+          "source": "posec3d",
+          "module": "posec3d_inference",
+          "status": "demo_ready",
+          "confidence_range": [0.0, 1.0],
+          "emit_threshold": 0.40,
+          "score_description": "Sigmoid output from PoseC3D-S multi-label head. Higher threshold due to visual distinctiveness of contact falls."
+        },
+        {
+          "code": "occluded_unclear",
+          "source": "heuristic",
+          "module": "scene_quality",
+          "emit_as": "context_hint",
+          "context_hint_code": "partial_body_visible",
+          "status": "demo_ready",
+          "emit_threshold": null,
+          "score_description": "Emitted as context_hint:partial_body_visible when bounding-box IoU overlap between tracked persons exceeds 0.15."
+        },
+        {
+          "code": "normal_contact",
+          "source": null,
+          "module": null,
+          "status": "not_emitted",
+          "emit_threshold": null,
+          "score_description": "Implicit negative. Not emitted."
+        },
+        {
+          "code": "restraint_escort",
+          "source": null,
+          "module": null,
+          "status": "not_covered",
+          "emit_threshold": null,
+          "score_description": "Out of scope v1."
+        },
+        {
+          "code": "staff_intervention",
+          "source": null,
+          "module": null,
+          "status": "not_covered",
+          "emit_threshold": null,
+          "score_description": "Out of scope v1."
+        }
+      ]
+    }
+  }
+}

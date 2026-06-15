@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+outputs/
+yolo11n-pose.pt
+.venv/

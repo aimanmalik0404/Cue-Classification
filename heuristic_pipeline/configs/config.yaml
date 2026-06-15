@@ -1,0 +1,152 @@
+# ─── GLOBAL PIPELINE WINDOW ───────────────────────────────────────────────────
+# All behavioral cues predict on a rolling window, not every frame.
+# At 25 FPS, 4.0 seconds ≈ 100 frames.
+pipeline:
+  window_seconds: 4.0                # observation window length
+  predict_interval_seconds: 4.0      # emit predictions every N seconds
+  history_buffer_seconds: 5.0        # tracker keypoint history retention
+
+model:
+  yolo_model: "yolo11n-pose.pt"       # path or ultralytics model name
+  device: "cpu"
+  conf_threshold: 0.35
+  iou_threshold: 0.45
+  tracker: "bytetrack.yaml"           # ultralytics built-in tracker config
+
+# ─── FAST APPROACH ────────────────────────────────────────────────────────────
+# All distance/speed values are expressed as fractions of the frame diagonal
+# (0.0–1.0) or in SECONDS — so they auto-scale to any resolution or FPS.
+fast_approach:
+  enabled: true
+  alert_cooldown_seconds: 4.0
+  min_frames_tracked: 5
+  velocity_threshold_pct: 0.10      # min speed: 5.0% of frame diagonal per second
+  distance_decrease_pct:  0.020      # gap must close by 2.0% of diagonal per second
+  min_pair_distance_pct:  0.05       # ignore pairs closer than 5% of diagonal
+  max_pair_distance_pct:  0.65       # ignore pairs farther than 65% of diagonal
+  min_frames_tracked:     5          # must be tracked this many frames (fixed)
+  direction_alignment_threshold: 0.6 # cosine similarity (dimensionless, no scaling needed)
+  alert_cooldown_seconds: 4.0        # suppress repeated alerts for same pair (seconds)
+
+# ─── CROWD CONVERGENCE ────────────────────────────────────────────────────────
+crowd_convergence:
+  enabled: true
+  min_crowd_size: 2                  # minimum number of people to count as a crowd
+  convergence_window_seconds: 0.8    # rolling sub-window for distance trend (seconds)
+  distance_decrease_ratio: 0.80      # avg distance must drop to X% of baseline to trigger
+  min_vector_alignment: 0.55         # fraction of crowd vectors that must point inward
+  dbscan_eps_pct: 0.16               # DBSCAN cluster radius: 16% of frame diagonal
+  dbscan_min_samples: 2
+  alert_cooldown_seconds: 4.0        # seconds
+
+# ─── HEAD DROP ────────────────────────────────────────────────────────────────
+head_drop:
+  enabled: true
+  window_seconds: 1.0
+  min_torso_pct: 0.05
+  max_walking_vel_per_sec: 1.25      # torso-lengths per second (velocity gate)
+  sho_width_threshold: 0.12
+  sho_width_persist: 0.60
+  nose_sho_threshold: -0.28
+  nose_sho_persist: 0.55
+  nose_sho_change_thr: -0.04
+  trunk_angle_gate: 0.18
+  score_threshold: 0.55
+  confirm_windows: 1                 # temporal filter: consecutive positive windows
+  reset_windows: 2                   # consecutive negative windows to clear
+
+# ─── FALL DETECTION (NEAR FALL & LYING) ───────────────────────────────────────
+fall_detection:
+  enabled: true
+  # Internal sub-windows (seconds) — used inside the global prediction window
+  window_seconds: 0.5                # rolling buffer for sustained checks
+  lying_sustained_seconds: 0.4
+  head_rest_seconds: 0.4
+  near_fall_velocity_seconds: 0.17
+  bend_sustained_seconds: 0.17
+  near_fall_angle_delta_deg_s: 90
+  lying_score_threshold: 1.5
+  lying_vertical_ratio: 0.35
+  lying_joint_y_tolerance: 0.15
+  aspect_ratio_lying: 1.5
+  near_fall_angle_min: 20
+  near_fall_angle_max: 60
+  bend_hip_drop_ratio_max: 0.10
+  bend_torso_compression_min: 0.30
+  bend_angle_min: 25
+
+# ─── SLUMPED POSTURE ──────────────────────────────────────────────────────────
+slumped_posture:
+  enabled: true
+  spine_angle_deg: 20
+  shoulder_hip_ratio: 0.75
+  min_hit_ratio: 0.40                # fraction of window frames that must be slumped
+
+# ─── LEANING ON SURFACE ───────────────────────────────────────────────────────
+leaning:
+  enabled: true
+  lean_ratio_threshold: 0.25
+  lean_angle_deg: 20
+  movement_threshold_pct: 0.015
+  min_hit_ratio: 0.40                # fraction of window frames that must be leaning
+
+# ─── SCENE QUALITY ────────────────────────────────────────────────────────────
+scene_quality:
+  enabled: true
+  use_window: false                  # live per-frame metrics for the quality panel
+  brightness_low: 40                 # 0-255, below = dark
+  brightness_high: 220               # above = overexposed
+  contrast_low: 20                   # std-dev below = low contrast
+  blur_threshold: 80.0               # Laplacian variance below = blurry
+  occlusion_iou_threshold: 0.15      # IoU above = overlapping boxes (partially occluded)
+  quality_smoothing_seconds: 0.4     # running average window (seconds)
+
+# ─── CUE PUBLISHER ────────────────────────────────────────────────────────────
+# Formats alerts into Kenneth's behavior_cues JSON schema.
+# Output: outputs/behavior_cues/<video>_behavior_cues.jsonl  (always written)
+# Redis:  set redis_url to publish live (requires: pip install redis)
+cue_publisher:
+  camera_id: 0              # set to actual camera ID at deployment
+  organization_id: 0        # set to actual org ID at deployment
+  module_version: "0.1.0"
+  emit_threshold: 0.30      # global floor — cues below this are never published
+  redis_url: null           # e.g. "redis://localhost:6379" — null = file-only mode
+  per_cue_thresholds:       # override per cue (Kenneth's code names)
+    near_fall:                0.50
+    lying_or_collapsed:       0.50
+    head_drop:                0.45
+    slumped_posture:          0.45
+    leaning_on_surface_or_person: 0.45
+    fast_approach:            0.40
+    crowd_convergence:        0.40
+    stumble_recover:          0.35
+    push_shove:               0.35
+    swing_attempt:            0.35
+    grapple_clinch:           0.35
+    aggressive_posture:       0.35
+    person_falls_after_contact: 0.40
+
+# ─── OUTPUT ───────────────────────────────────────────────────────────────────
+output:
+  output_dir: "outputs"
+  save_video: true
+  save_alerts: true
+  save_logs: true
+  display: false                     # show live window (set false for headless servers)
+  video_codec: "mp4v"
+
+# ─── VISUALIZATION ────────────────────────────────────────────────────────────
+visualization:
+  show_skeletons: true
+  show_track_ids: true
+  show_velocity_vectors: true
+  show_scene_quality_panel: true
+  show_cluster_ellipses: true
+  alert_banner_seconds: 2.0          # how long to show an alert banner (seconds)
+  skeleton_color: [0, 255, 120]
+  track_id_color: [255, 255, 0]
+  fast_approach_color: [0, 0, 255]
+  crowd_color: [0, 165, 255]
+  quality_good_color: [0, 200, 0]
+  quality_fair_color: [0, 165, 255]
+  quality_poor_color: [0, 0, 200]

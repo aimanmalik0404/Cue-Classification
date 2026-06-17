@@ -238,7 +238,7 @@ class CuePublisher:
         if self._redis is not None:
             channel = (
                 f"org:{self.organization_id}:behavior_cues"
-                f":{msg['family']}:cam:{self.camera_id}"
+                f":{msg['family']}:{self.camera_id}"
             )
             try:
                 self._redis.publish(channel, line)

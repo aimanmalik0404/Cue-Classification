@@ -42,6 +42,15 @@ class SceneQualityDetector(BaseDetector):
         self._history = deque(maxlen=self.smooth_frames)
 
     def detect(self, frame, tracks, frame_idx, timestamp) -> DetectionResult:
+        # In live service mode, MS-1 sends JSON (no image pixels).
+        # Skip visual computation and return a neutral result.
+        if frame is None:
+            return DetectionResult(triggered=False, confidence=1.0,
+                                   metadata={"category": "GOOD", "visibility": 1.0,
+                                             "brightness": -1, "contrast": -1,
+                                             "blur": -1, "occlusion": 0.0,
+                                             "live_mode": True})
+
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
 
         brightness = float(gray.mean())

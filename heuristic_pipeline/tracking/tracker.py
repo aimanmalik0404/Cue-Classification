@@ -2,12 +2,15 @@
 
 Wraps the Ultralytics built-in ByteTrack integration so the rest of the
 pipeline gets a clean, typed interface instead of raw ultralytics result objects.
+
+Also exposes PersonTrack.from_ms1_json() for the live Redis cue service,
+which receives pre-computed tracks from MS-1 instead of running YOLO locally.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
+from typing import Optional
 import numpy as np
-from ultralytics import YOLO
 
 
 @dataclass
@@ -17,13 +20,17 @@ class PersonTrack:
     keypoints: np.ndarray    # (17, 3) — x, y, confidence
     centroid: np.ndarray     # (2,)
     confidence: float
-    # History maintained by TrackerManager
+    # History maintained by TrackerManager or the live service
     centroid_history: deque = field(default_factory=lambda: deque(maxlen=120))
     keypoints_history: deque = field(default_factory=lambda: deque(maxlen=120))
+    # Optional: pre-computed velocity from MS-1 (bypasses history-based calculation)
+    _ms1_velocity: Optional[np.ndarray] = field(default=None, repr=False)
 
     @property
     def velocity(self) -> np.ndarray:
-        """Mean velocity over the last few recorded centroids."""
+        """Pre-computed velocity from MS-1 if available, else derive from history."""
+        if self._ms1_velocity is not None:
+            return self._ms1_velocity
         h = list(self.centroid_history)[-5:]
         if len(h) < 2:
             return np.zeros(2)
@@ -38,11 +45,65 @@ class PersonTrack:
     def frames_tracked(self) -> int:
         return len(self.centroid_history)
 
+    @staticmethod
+    def from_ms1_json(person: dict, history_store: dict, history_maxlen: int = 120) -> "PersonTrack":
+        """
+        Build a PersonTrack from a single persons[] entry in Kenneth's ai_detection JSON.
+
+        Args:
+            person:         One element from msg["persons"].
+            history_store:  A dict keyed by track_id holding persistent deques across frames.
+                            Pass a module-level dict from service.py so history accumulates.
+            history_maxlen: Max frames of history to keep (default 120).
+        """
+        tid = int(person["track_id"])
+        box_raw = person["bounding_box"]  # [x1, y1, x2, y2]
+        box = np.array(box_raw, dtype=float)
+        cx = (box[0] + box[2]) / 2
+        cy = (box[1] + box[3]) / 2
+        centroid = np.array([cx, cy])
+
+        # Build (17, 3) keypoints array — pad with zeros if fewer than 17 given
+        kps_raw = person.get("pose_keypoints", [])
+        kps = np.zeros((17, 3), dtype=float)
+        for i, kp in enumerate(kps_raw[:17]):
+            if len(kp) >= 2:
+                kps[i, 0] = kp[0]
+                kps[i, 1] = kp[1]
+                kps[i, 2] = kp[2] if len(kp) > 2 else 1.0
+
+        # Native velocity/speed from MS-1 (avoids cold-start history lag)
+        vel_raw = person.get("velocity")  # [vx, vy] or None
+        ms1_vel = np.array(vel_raw, dtype=float) if vel_raw is not None else None
+
+        # Maintain persistent centroid history across frames
+        if tid not in history_store:
+            history_store[tid] = {
+                "centroids": deque(maxlen=history_maxlen),
+                "keypoints": deque(maxlen=history_maxlen),
+            }
+        history_store[tid]["centroids"].append(centroid.copy())
+        history_store[tid]["keypoints"].append(kps.copy())
+
+        return PersonTrack(
+            track_id=tid,
+            box=box,
+            keypoints=kps,
+            centroid=centroid,
+            confidence=float(person.get("confidence", 1.0)),
+            centroid_history=history_store[tid]["centroids"],
+            keypoints_history=history_store[tid]["keypoints"],
+            _ms1_velocity=ms1_vel,
+        )
+
 
 class TrackerManager:
     """
-    Runs YOLO + ByteTrack on each frame and returns a list of PersonTrack objects.
+    Runs YOLO + BoT-SORT/ByteTrack on each frame and returns a list of PersonTrack objects.
     Maintains centroid history per track_id across frames.
+
+    NOTE: In the live Redis cue service (service.py), TrackerManager is NOT used.
+    Instead, PersonTrack.from_ms1_json() parses each MS-1 frame directly.
     """
 
     def __init__(self, cfg: dict):
@@ -53,6 +114,7 @@ class TrackerManager:
         self.iou    = cfg["model"]["iou_threshold"]
         self.tracker_cfg = cfg["model"]["tracker"]
 
+        from ultralytics import YOLO
         self.model = YOLO(model_path)
         self._history_maxlen = 120
         self._histories: dict[int, deque] = {}

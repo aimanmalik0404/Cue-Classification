@@ -17,20 +17,21 @@ This service replaces the need to run YOLO on your edge. All pose tracking is do
 ## Architecture
 
 ```
-MS-1 (Camera + Pose Tracking)
-        |
-        | Redis pubsub
-        v
-org:{org_id}:base_detection:{cam_id}
-        |
-        v
-nex-heuristic-cues (this service)
-        |  Runs: HeuristicPipeline (windowing, detection, scoring)
-        |
-        v
-org:{org_id}:behavior_cues:{family}:{cam_id}
-        |
-        v
+MS-1 (Cameras + Pose Tracking)
+         |
+         | Redis wildcard psubscribe
+         v
+org:{org_id}:device:{device_id}:base_detection:*
+         |
+         v
+nex-cue-heuristic (Global Orchestrator)
+         |  - Fetches camera list from MS-3 API
+         |  - Listens for add/remove camera commands
+         |  - Routes to internal per-camera HeuristicPipelines
+         v
+org:{org_id}:device:{device_id}:behavior_cues:{family}:{cam_id}
+         |
+         v
 MS-11 Alert Aggregator → OffTapWatch
 ```
 
@@ -44,22 +45,25 @@ MS-11 Alert Aggregator → OffTapWatch
 docker build -f Dockerfile.heuristic -t nex/heuristic-cue-service:latest .
 ```
 
-### 2. Run with Docker Compose (staging)
+### 2. Run with Docker Compose (Staging / Dev Mode)
+
+For local development without Kenneth's MS-3 API, you can hardcode the cameras you want the orchestrator to track:
 
 ```bash
+# In docker-compose.heuristic.yml, set:
+# STAGING_CAMERA_IDS: "4,5"
 docker-compose -f docker-compose.heuristic.yml up
 ```
 
-Adjust the environment variables in `docker-compose.heuristic.yml` to match your `ORGANIZATION_ID`, `CAMERA_ID`, and `REDIS_URL` before deploying.
-
-### 3. Run standalone (no Compose)
+### 3. Run Production Edge (with MS-3)
 
 ```bash
 docker run -d \
-  -e REDIS_URL=redis://your-redis-host:6379/0 \
+  -e REDIS_HOST=localhost \
+  -e REDIS_PORT=6379 \
   -e ORGANIZATION_ID=1 \
-  -e CAMERA_ID=4 \
-  -e SUBSCRIBE_CHANNEL=org:1:base_detection:4 \
+  -e DEVICE_ID=edge-node-01 \
+  -e MS3_URL=http://ms3:8000 \
   nex/heuristic-cue-service:latest
 ```
 
@@ -69,33 +73,44 @@ docker run -d \
 
 | Variable             | Required | Default                         | Description |
 |----------------------|----------|---------------------------------|-------------|
-| `REDIS_URL`          | ✅ Yes   | —                               | Redis connection URL |
-| `ORGANIZATION_ID`    | ✅ Yes   | —                               | Your org ID (must match MS-1 channel) |
-| `CAMERA_ID`          | ✅ Yes   | —                               | Camera ID (must match MS-1 channel) |
-| `SUBSCRIBE_CHANNEL`  | ✅ Yes   | `org:{org}:base_detection:{cam}`| Full Redis subscribe channel. For edge: `org:1:device:{device_id}:base_detection:4` |
-| `DEVICE_ID`          | No       | `0`                             | Edge device ID (informational) |
+| `REDIS_HOST`         | No       | `localhost`                     | Redis hostname |
+| `REDIS_PORT`         | No       | `6379`                          | Redis port |
+| `REDIS_URL`          | No       | —                               | Full Redis URL (overrides HOST/PORT if set) |
+| `ORGANIZATION_ID`    | ✅ Yes   | —                               | Your org ID |
+| `DEVICE_ID`          | Edge     | —                               | Edge device ID (enables MS-3 lookup and device-scoped channels) |
+| `MS3_URL`            | Edge     | —                               | Base URL for MS-3 to fetch assigned cameras |
+| `STAGING_CAMERA_IDS` | Staging  | —                               | Comma-separated list of cameras (e.g., `4,5`). Bypasses MS-3 lookup. |
 | `EMIT_THRESHOLD`     | No       | `0.30`                          | Global minimum confidence to publish |
 | `FPS_HINT`           | No       | `25.0`                          | Camera FPS for window calibration |
 | `WIDTH_HINT`         | No       | `1920`                          | Frame width in pixels |
 | `HEIGHT_HINT`        | No       | `1080`                          | Frame height in pixels |
 | `LOG_LEVEL`          | No       | `INFO`                          | `DEBUG`, `INFO`, or `WARNING` |
-| `CONFIG_PATH`        | No       | `configs/config.yaml`           | Path to the detector config file |
 
 ---
 
 ## Redis Channel Format
 
 ### Subscribe (Input from MS-1)
-| Deployment  | Channel |
-|-------------|---------|
-| Cloud/Staging | `org:{organization_id}:base_detection:{camera_id}` |
-| Edge (with device) | `org:{organization_id}:device:{device_id}:base_detection:{camera_id}` |
+The service automatically multiplexes frames from a wildcard channel.
+
+| Deployment Mode | Channel Subscribed |
+|-----------------|--------------------|
+| Edge (Production)| `org:{organization_id}:device:{device_id}:base_detection:*` |
+| Cloud/Staging    | `org:{organization_id}:base_detection:*` |
+
+### Command Channel (Edge only)
+The service listens for `add_camera` and `remove_camera` actions on:
+```
+device:{device_id}:commands
+```
 
 ### Publish (Output to MS-11)
-```
-org:{organization_id}:behavior_cues:{family}:{camera_id}
-```
-Where `family` is either `physical_instability` or `aggressive_interaction`.
+| Deployment Mode | Channel Published |
+|-----------------|-------------------|
+| Edge (Production)| `org:{organization_id}:device:{device_id}:behavior_cues:{family}:{camera_id}` |
+| Cloud/Staging    | `org:{organization_id}:behavior_cues:{family}:{camera_id}` |
+
+*(Where `family` is either `physical_instability` or `aggressive_interaction`)*
 
 ---
 

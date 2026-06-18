@@ -124,6 +124,7 @@ class CuePublisher:
 
         self.camera_id       = int(pub_cfg.get("camera_id", 0))
         self.organization_id = int(pub_cfg.get("organization_id", 0))
+        self.device_id       = str(pub_cfg.get("device_id", "")).strip()   # empty = staging
         self.module_version  = pub_cfg.get("module_version", "0.1.0")
         self.emit_threshold  = float(pub_cfg.get("emit_threshold", _DEFAULT_EMIT_THRESHOLD))
         self.per_cue_thresh  = pub_cfg.get("per_cue_thresholds", {})
@@ -236,10 +237,18 @@ class CuePublisher:
 
         # Redis
         if self._redis is not None:
-            channel = (
-                f"org:{self.organization_id}:behavior_cues"
-                f":{msg['family']}:{self.camera_id}"
-            )
+            # Production edge: org:{org}:device:{device}:behavior_cues:{family}:{cam}
+            # Staging (no device_id): org:{org}:behavior_cues:{family}:{cam}
+            if self.device_id:
+                channel = (
+                    f"org:{self.organization_id}:device:{self.device_id}"
+                    f":behavior_cues:{msg['family']}:{self.camera_id}"
+                )
+            else:
+                channel = (
+                    f"org:{self.organization_id}:behavior_cues"
+                    f":{msg['family']}:{self.camera_id}"
+                )
             try:
                 self._redis.publish(channel, line)
             except Exception as e:

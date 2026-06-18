@@ -1,12 +1,17 @@
-# Nex Heuristic Cue Service — Docker Compose (Staging)
-# Mirrors Kenneth's suggested stub. Works standalone or alongside his MS-11 container.
+# Nex Heuristic Cue Service — Docker Compose
+# One container per edge device. Manages all assigned cameras internally.
 #
-# Usage:
+# Staging (no MS-3):
+#   STAGING_CAMERA_IDS=4,5  — skips MS-3 lookup, uses org:{org}:base_detection:* pattern
+#
+# Production edge:
+#   Set DEVICE_ID + MS3_URL  — fetches camera list from MS-3 on startup
+#   Listens to device:{device_id}:commands for live add_camera / remove_camera
+#
+# Build:
 #   docker build -f Dockerfile.heuristic -t nex/heuristic-cue-service:latest .
+# Run staging:
 #   docker-compose -f docker-compose.heuristic.yml up
-#
-# For edge deployment, set DEVICE_ID and update SUBSCRIBE_CHANNEL accordingly:
-#   SUBSCRIBE_CHANNEL=org:1:device:0:base_detection:4
 
 version: "3.9"
 
@@ -22,34 +27,39 @@ services:
       timeout: 3s
       retries: 5
 
-  # ── Nex Heuristic Cue Service ─────────────────────────────────────────────
-  nex-heuristic-cues:
+  # ── Nex Heuristic Cue Service (all heuristic families, all cameras) ────────
+  nex-cue-heuristic:
     image: nex/heuristic-cue-service:latest
     build:
       context: .
       dockerfile: Dockerfile.heuristic
     environment:
       # ── Required ───────────────────────────────────────────────────────────
-      REDIS_URL:          redis://redis:6379/0
-      ORGANIZATION_ID:    "1"
-      CAMERA_ID:          "4"
-      SUBSCRIBE_CHANNEL:  org:1:base_detection:4
+      REDIS_HOST:           redis
+      REDIS_PORT:           "6379"
+      ORGANIZATION_ID:      "1"
 
-      # ── Optional overrides ─────────────────────────────────────────────────
-      DEVICE_ID:          "0"           # edge only — also update SUBSCRIBE_CHANNEL
-      EMIT_THRESHOLD:     "0.30"        # global min confidence to publish
-      FPS_HINT:           "25.0"        # used to calibrate windowing (match your camera)
-      WIDTH_HINT:         "1920"        # frame width (from frame_shape in MS-1 payload)
-      HEIGHT_HINT:        "1080"        # frame height
-      LOG_LEVEL:          "INFO"        # DEBUG | INFO | WARNING
-      CONFIG_PATH:        "configs/config.yaml"
+      # ── Production edge (uncomment + set for real deployment) ──────────────
+      # DEVICE_ID:          "your-device-uuid"
+      # MS3_URL:            "http://ms3:8000"
+
+      # ── Staging override: skip MS-3, use these camera IDs directly ─────────
+      STAGING_CAMERA_IDS:   "4"      # comma-separated e.g. "4,5,6"
+
+      # ── Optional tuning ────────────────────────────────────────────────────
+      EMIT_THRESHOLD:       "0.30"   # global min confidence to publish
+      FPS_HINT:             "25.0"   # camera FPS for window calibration
+      WIDTH_HINT:           "1920"   # frame width hint
+      HEIGHT_HINT:          "1080"   # frame height hint
+      LOG_LEVEL:            "INFO"   # DEBUG | INFO | WARNING
+      CONFIG_PATH:          "configs/config.yaml"
 
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── Kenneth's MS-11 Alert Aggregator (staging only — remove for production) ─
+  # ── Kenneth's MS-11 Alert Aggregator (staging only) ───────────────────────
   # microservice-11-alert-aggregator:
   #   image: offtapwatch/microservice-11-alert-aggregator:local
   #   environment:

@@ -29,7 +29,10 @@ Environment variables:
 """
 from __future__ import annotations
 
+import base64
 import copy
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -113,17 +116,68 @@ def _init_camera(camera_id: int, base_cfg: dict, fps: float, width: int, height:
     )
 
 
-def _fetch_cameras_from_ms3(ms3_url: str, device_id: str) -> list[int]:
-    """Call MS-3 to get the list of camera IDs assigned to this device."""
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _service_jwt(secret: str, organization_id: Optional[int]) -> str:
+    """Mint an HS256 service JWT matching shared.jwt_utils.create_service_token.
+
+    Stdlib-only; MS-3 accepts a service token signed with JWT_SECRET_KEY for
+    inter-service calls such as device camera discovery.
+    """
+    now = int(time.time())
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "sub": "heuristic-cue-service",
+        "iss": "microservice-auth",
+        "type": "service",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    if organization_id:
+        payload["organization_id"] = int(organization_id)
+    signing_input = (
+        _b64url(json.dumps(header, separators=(",", ":")).encode())
+        + "."
+        + _b64url(json.dumps(payload, separators=(",", ":")).encode())
+    )
+    sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    return signing_input + "." + _b64url(sig)
+
+
+def _ms3_headers(organization_id: Optional[int]) -> dict:
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    secret = os.environ.get("SECRET_KEY", "").strip()
+    if secret:
+        headers["Authorization"] = f"Bearer {_service_jwt(secret, organization_id)}"
+    else:
+        logger.warning("SECRET_KEY not set — calling MS-3 without auth (will 401 on staging)")
+    if organization_id:
+        headers["X-Organization-ID"] = str(organization_id)
+    return headers
+
+
+def _fetch_cameras_from_ms3(
+    ms3_url: str, device_id: str, organization_id: Optional[int] = None
+) -> list[int]:
+    """Call MS-3 to get the list of camera IDs assigned to this device.
+
+    The endpoint returns camera objects with an ``id`` field (auth required).
+    """
     url = f"{ms3_url.rstrip('/')}/api/edge/devices/{device_id}/cameras"
     logger.info(f"Fetching camera list from MS-3: {url}")
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        req = urllib.request.Request(url, headers=_ms3_headers(organization_id))
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
-        # Expect list of objects with a camera_id field, or plain list of ints
         if isinstance(data, list):
-            return [int(c["camera_id"]) if isinstance(c, dict) else int(c) for c in data]
+            ids: list[int] = []
+            for c in data:
+                cam = c.get("id", c.get("camera_id")) if isinstance(c, dict) else c
+                if cam is not None:
+                    ids.append(int(cam))
+            return ids
         logger.warning(f"Unexpected MS-3 response format: {data}")
         return []
     except urllib.error.URLError as e:
@@ -203,7 +257,7 @@ def main() -> None:
         camera_ids = [int(c.strip()) for c in staging_ids_env.split(",") if c.strip()]
         logger.info(f"Staging mode — using STAGING_CAMERA_IDS: {camera_ids}")
     elif device_id and os.environ.get("MS3_URL"):
-        camera_ids = _fetch_cameras_from_ms3(os.environ["MS3_URL"], device_id)
+        camera_ids = _fetch_cameras_from_ms3(os.environ["MS3_URL"], device_id, org_id)
         logger.info(f"MS-3 assigned cameras: {camera_ids}")
     else:
         logger.warning("No MS3_URL or STAGING_CAMERA_IDS set — starting with no cameras. "

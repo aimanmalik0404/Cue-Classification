@@ -88,19 +88,37 @@ class HeuristicPipeline:
             results[name] = r if isinstance(r, list) else ([r] if r is not None else [])
 
         # 2. Fire Alerts
+        # Map track_id -> [x1,y1,x2,y2] so person-level cues that carry only a track_id
+        # (leaning / fall / head_drop / slumped_posture) still get a bounding box in their
+        # detector_signal. Without it the alert clip renders NO red box: those detectors
+        # emit just a score + track_id, the overlay extractor needs coordinates, and the
+        # cue track ids don't exist in MS-1's ByteTrack cache so the cache lookup also misses.
+        track_boxes = {}
+        for t in tracks:
+            tid = getattr(t, "track_id", None)
+            box = getattr(t, "box", None)
+            if tid is None or box is None:
+                continue
+            try:
+                track_boxes[int(tid)] = [float(v) for v in (box.tolist() if hasattr(box, "tolist") else box)]
+            except (TypeError, ValueError):
+                pass
+
         for name, results_list in results.items():
             for r_item in results_list:
                 if not r_item.triggered:
                     continue
                 if not r_item.metadata.get("is_window_prediction", True):
                     continue
-                
+
+                metadata = self._attach_track_box(r_item.metadata.get("best", r_item.metadata), track_boxes)
+
                 self.alert_mgr.fire(
                     timestamp=timestamp,
                     frame_idx=frame_idx,
                     cue=name,
                     confidence=r_item.confidence,
-                    metadata=r_item.metadata.get("best", r_item.metadata),
+                    metadata=metadata,
                 )
 
         # 3. Refresh scene quality context
@@ -109,6 +127,25 @@ class HeuristicPipeline:
             self.cue_pub.update_quality(sq_results[0].metadata)
 
         return results
+
+    @staticmethod
+    def _attach_track_box(metadata: dict, track_boxes: dict) -> dict:
+        """Add the alerted track's [x1,y1,x2,y2] box to a person-level cue's signal when
+        the detector didn't emit box coordinates, so the alert clip can draw its red box.
+        Leaves alerts that already carry coords (e.g. fast_approach's *_box) untouched."""
+        if not isinstance(metadata, dict) or not track_boxes:
+            return metadata
+        if any(isinstance(k, str) and (k.endswith("_box") or k in ("box", "bbox", "bounding_box"))
+               for k in metadata):
+            return metadata
+        tid = metadata.get("track_id")
+        try:
+            tid = int(tid) if tid is not None else None
+        except (TypeError, ValueError):
+            tid = None
+        if tid is not None and tid in track_boxes:
+            return {**metadata, "box": track_boxes[tid]}
+        return metadata
 
     def get_summary(self) -> tuple[dict, dict]:
         """Return (alert_summary, published_summary)."""

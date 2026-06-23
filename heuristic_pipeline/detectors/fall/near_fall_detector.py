@@ -129,7 +129,21 @@ class NearFallDetector:
         )
         evidence["com_off_balance"] = com_off
 
-        path_a = in_zone and rapid_tilt and (arms_up or com_off)
+        # C1+C2: a single balance reflex (arms_up OR com_off) during a fast forward lean is
+        # NORMAL — require BOTH, AND a real hip drop. A rigid hip-pivot lean keeps the hip
+        # near standing height (h_drop ~0); a genuine fall drops the hip with the shoulders
+        # (h_drop >= 0.10). Excludes normal/fast leaning without missing real falls (whole-body
+        # tilt always drops the hip; PATH B catches slow bends; no calibration -> allow).
+        instability_count = int(bool(arms_up)) + int(bool(com_off))
+        _sh = window.standing_height_estimate
+        _shy = window.standing_hip_y_estimate
+        if _sh is not None and _shy is not None:
+            _hd = hip_height_ratio(keypoints, _shy, _sh)
+            hip_dropping = (_hd is not None and _hd >= 0.10)
+        else:
+            hip_dropping = True  # cannot verify (no standing calibration) -> allow (recall-safe)
+        evidence["hip_dropping"] = hip_dropping
+        path_a = in_zone and rapid_tilt and instability_count >= 2 and hip_dropping
 
         # ═══════════════════════════════════════════════════════════════════════
         # PATH B — Bend detection

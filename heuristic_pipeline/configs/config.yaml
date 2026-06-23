@@ -64,7 +64,7 @@ fall_detection:
   head_rest_seconds: 0.4
   near_fall_velocity_seconds: 0.33
   bend_sustained_seconds: 0.5
-  near_fall_angle_delta_deg_s: 180
+  near_fall_angle_delta_deg_s: 270
   lying_score_threshold: 1.5
   lying_vertical_ratio: 0.35
   lying_joint_y_tolerance: 0.15
@@ -78,17 +78,17 @@ fall_detection:
 # ─── SLUMPED POSTURE ──────────────────────────────────────────────────────────
 slumped_posture:
   enabled: true
-  spine_angle_deg: 20
-  shoulder_hip_ratio: 0.75
-  min_hit_ratio: 0.40                # fraction of window frames that must be slumped
+  spine_angle_deg: 35                 # was 20 — 20-35deg is normal seated/relaxed posture
+  shoulder_hip_ratio: 0.65            # was 0.75 — require clearer shoulder collapse over hips
+  min_hit_ratio: 0.50                 # was 0.40 — must be slumped for >=50% of the window
 
 # ─── LEANING ON SURFACE ───────────────────────────────────────────────────────
 leaning:
   enabled: true
-  lean_ratio_threshold: 0.25
-  lean_angle_deg: 20
-  movement_threshold_pct: 0.015
-  min_hit_ratio: 0.40                # fraction of window frames that must be leaning
+  lean_ratio_threshold: 0.35          # was 0.25 — normal bar-leaning trips 0.25
+  lean_angle_deg: 30                  # was 20 — require a stronger lean
+  movement_threshold_pct: 0.05        # was 0.015 (~2px, effectively off) — require real stillness
+  min_hit_ratio: 0.50                # was 0.40 — sustained, not a transient bar-lean
 
 # ─── SCENE QUALITY ────────────────────────────────────────────────────────────
 scene_quality:
@@ -114,9 +114,9 @@ cue_publisher:
   per_cue_thresholds:       # override per cue (Kenneth's code names)
     near_fall:                0.50
     lying_or_collapsed:       0.50
-    head_drop:                0.45
-    slumped_posture:          0.45
-    leaning_on_surface_or_person: 0.45
+    head_drop:                0.55
+    slumped_posture:          0.55
+    leaning_on_surface_or_person: 0.55
     fast_approach:            0.65
     crowd_convergence:        0.40
     stumble_recover:          0.35

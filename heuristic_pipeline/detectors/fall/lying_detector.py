@@ -30,6 +30,7 @@ from .core.keypoint_utils import (
     midpoint_xy,
     current_torso_length,
     current_hip_y,
+    hip_height_ratio,
 )
 from .core.frame_window import FrameWindow
 from .config import (
@@ -185,7 +186,20 @@ class LyingDetector:
             )
             evidence["head_is_still"] = head_still
 
-            head_on_surface = head_below and head_still
+            # C5: head-down + still ALSO happens when a person sits low or slumps over a
+            # table — a false "lying/collapsed" that (via welfare_near_fall) fires a HIGH
+            # alert on its own. Require the hip to have genuinely collapsed toward the floor
+            # (>=15% of standing height). A passed-out-over-table person is still surfaced by
+            # slumped_posture/head_drop cues; a real floor-collapse always drops the hip.
+            hip_collapsed = True  # cannot verify (no standing calibration) -> allow (recall-safe)
+            _shy = getattr(window, "standing_hip_y_estimate", None)
+            _sh = getattr(window, "standing_height_estimate", None)
+            if _shy is not None and _sh is not None:
+                _hd = hip_height_ratio(keypoints, _shy, _sh)
+                hip_collapsed = (_hd is not None and _hd >= 0.15)
+            evidence["hip_collapsed"] = hip_collapsed
+
+            head_on_surface = head_below and head_still and hip_collapsed
 
         evidence["head_on_surface"] = head_on_surface
 

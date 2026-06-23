@@ -27,7 +27,7 @@ NEAR_FALL_VELOCITY_SECONDS  = 0.33     # Window for angular velocity averaging (
 BEND_SUSTAINED_SECONDS      = 0.5      # Bend must hold this long (raised to reject transient reaches)
 
 # Near-fall angle delta: degrees of tilt per second (not per frame)
-NEAR_FALL_ANGLE_DELTA_DEG_S = 180      # 180 deg/s rapid tilt (= 6deg/frame @30fps; 3 was normal-lean speed)
+NEAR_FALL_ANGLE_DELTA_DEG_S = 270      # 270 deg/s rapid tilt — uncontrolled collapse only (controlled fast-lean peaks ~180 deg/s)
 
 # ─── Lying / Collapsed thresholds ────────────────────────────────────────────
 LYING_SCORE_THRESHOLD   = 1.5          # shoulder_x_span / (vertical_span + 1)

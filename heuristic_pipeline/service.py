@@ -51,6 +51,12 @@ import redis
 sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.config_loader import load_config
+from utils.artifact_loader import (
+    download_artifact_to_local,
+    download_manifest,
+    verify_artifact,
+)
+from utils.config_hotreload import load_candidate_config, validate_candidate_config
 from pipeline import HeuristicPipeline
 from tracking.tracker import PersonTrack
 
@@ -75,11 +81,25 @@ class CameraState:
     history_maxlen: int = 125
 
 
+@dataclass
+class ActiveConfig:
+    """Mutable holder for the live base config + its version, retaining the
+    previous config so a 'rollback_model' command can restore it atomically."""
+    cfg: dict
+    version: Optional[str] = None
+    previous: Optional[dict] = None
+    previous_version: Optional[str] = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _build_base_config(cfg_path: str) -> dict:
-    """Load config.yaml and apply global env var overrides (no camera_id yet)."""
-    cfg = load_config(cfg_path)
+def apply_env_overrides(cfg: dict) -> dict:
+    """Apply the global env var overrides to a (base or candidate) config.
+
+    Factored out of _build_base_config so the hot-reload path can apply the
+    IDENTICAL organization_id / device_id / redis_url / emit_threshold treatment
+    to a candidate config loaded from a downloaded artifact. Mutates and returns
+    the same dict (no camera_id yet)."""
     pub = cfg.setdefault("cue_publisher", {})
     pub["organization_id"] = int(os.environ.get("ORGANIZATION_ID", pub.get("organization_id", 1)))
     pub["device_id"]       = os.environ.get("DEVICE_ID", pub.get("device_id", ""))
@@ -91,6 +111,12 @@ def _build_base_config(cfg_path: str) -> dict:
     pub["redis_url"]      = redis_url
     pub["emit_threshold"] = float(os.environ.get("EMIT_THRESHOLD", pub.get("emit_threshold", 0.30)))
     return cfg
+
+
+def _build_base_config(cfg_path: str) -> dict:
+    """Load config.yaml and apply global env var overrides (no camera_id yet)."""
+    cfg = load_config(cfg_path)
+    return apply_env_overrides(cfg)
 
 
 def _build_camera_config(base_cfg: dict, camera_id: int) -> dict:
@@ -208,11 +234,24 @@ def _handle_frame(msg_data: dict, state: CameraState) -> None:
 
 
 def _handle_command(cmd_data: dict, cameras: dict[int, CameraState],
-                    base_cfg: dict, fps: float, width: int, height: int) -> None:
-    """Process add_camera / remove_camera commands from Kenneth's command channel."""
-    action    = cmd_data.get("action", "")
-    camera_id = cmd_data.get("camera_id")
+                    active_cfg: ActiveConfig, fps: float, width: int, height: int) -> None:
+    """Process add_camera / remove_camera / reload_model / rollback_model commands.
 
+    add_camera / remove_camera arrive on Kenneth's device command channel;
+    reload_model / rollback_model arrive on either the device command channel
+    or the org:{org}:model_reload channel (see C5)."""
+    action = cmd_data.get("action", "")
+
+    # ── Hot-reload of the cue config bundle (no camera_id) ────────────────────
+    if action == "reload_model":
+        _handle_cue_reload(cmd_data, cameras, active_cfg, fps, width, height)
+        return
+    if action == "rollback_model":
+        _handle_cue_rollback(cmd_data, cameras, active_cfg, fps, width, height)
+        return
+
+    # ── Camera lifecycle commands ─────────────────────────────────────────────
+    camera_id = cmd_data.get("camera_id")
     if camera_id is None:
         logger.warning(f"Command missing camera_id: {cmd_data}")
         return
@@ -223,7 +262,7 @@ def _handle_command(cmd_data: dict, cameras: dict[int, CameraState],
         if camera_id in cameras:
             logger.info(f"[camera={camera_id}] Already tracking, ignoring add_camera.")
             return
-        cameras[camera_id] = _init_camera(camera_id, base_cfg, fps, width, height)
+        cameras[camera_id] = _init_camera(camera_id, active_cfg.cfg, fps, width, height)
         logger.info(f"[camera={camera_id}] Added dynamically via command.")
 
     elif action == "remove_camera":
@@ -237,6 +276,111 @@ def _handle_command(cmd_data: dict, cameras: dict[int, CameraState],
         logger.warning(f"Unknown command action: {action!r}")
 
 
+# ── Cue config hot-reload (C5) ─────────────────────────────────────────────────
+
+# Cue families this heuristic service is responsible for. aggressive_interaction
+# heuristics (push/shove/swing/etc.) and physical_instability (fall/slump/lean)
+# both live in this single-threaded service. A reload targeting the posec3d model
+# is ignored here (handled by a separate service on a different branch).
+_HEURISTIC_FAMILIES = {"physical_instability", "aggressive_interaction"}
+_HEURISTIC_TARGETS = {None, "heuristic", "config"}
+
+
+def _swap_cameras(cameras: dict[int, CameraState], new_cfg: dict,
+                  fps: float, width: int, height: int) -> dict[int, CameraState]:
+    """Build a fresh per-camera CameraState dict from ``new_cfg``, CARRYING OVER
+    each existing camera's history_store and frame_number so the running streams
+    keep their keypoint history across the swap. Returns the new dict (the caller
+    performs the atomic clear()+update())."""
+    new_cameras: dict[int, CameraState] = {}
+    for cam_id, old_state in cameras.items():
+        candidate = _init_camera(cam_id, new_cfg, fps, width, height)
+        candidate.history_store = old_state.history_store
+        candidate.frame_number = old_state.frame_number
+        new_cameras[cam_id] = candidate
+    return new_cameras
+
+
+def _handle_cue_reload(cmd: dict, cameras: dict[int, CameraState],
+                       active_cfg: ActiveConfig, fps: float, width: int, height: int) -> None:
+    """Validate + atomically swap in a candidate cue config bundle.
+
+    Gated to this service's families/targets. Downloads the artifact + manifest,
+    verifies the artifact, loads + health-checks the candidate config, then builds
+    candidate CameraStates (carrying over history) and swaps inline. On ANY failure
+    the active config is left untouched."""
+    family = cmd.get("family")
+    target = cmd.get("target")
+
+    if family not in _HEURISTIC_FAMILIES:
+        logger.info(f"reload_model ignored — family {family!r} not handled by heuristic service.")
+        return
+    if target not in _HEURISTIC_TARGETS:
+        logger.info(f"reload_model ignored — target {target!r} (e.g. posec3d) not handled here.")
+        return
+
+    url          = cmd.get("url")
+    manifest_url = cmd.get("manifest_url")
+    new_version  = cmd.get("model_version")
+    if not url:
+        logger.warning(f"reload_model missing 'url': {cmd}")
+        return
+
+    logger.info(f"reload_model received — family={family} target={target} "
+                f"version={new_version} url={url}")
+
+    try:
+        manifest   = download_manifest(manifest_url)
+        local_path = download_artifact_to_local(url)
+        verify_artifact(local_path, manifest)
+        candidate_cfg = load_candidate_config(local_path, apply_env_overrides)
+        validate_candidate_config(candidate_cfg)
+
+        new_cameras = _swap_cameras(cameras, candidate_cfg, fps, width, height)
+
+        # ── Atomic inline swap ────────────────────────────────────────────────
+        # The service is single-threaded (one get_message loop), so reassigning
+        # the holder + replacing the cameras dict contents between messages is
+        # inherently atomic — the camera stream is never interrupted.
+        active_cfg.previous         = active_cfg.cfg
+        active_cfg.previous_version = active_cfg.version
+        active_cfg.cfg              = candidate_cfg
+        active_cfg.version          = new_version
+        cameras.clear()
+        cameras.update(new_cameras)
+
+        logger.info(f"reload_model applied — now running version={new_version} "
+                    f"(family={family}); {len(cameras)} camera(s) swapped, history retained.")
+    except Exception as e:
+        logger.error(f"reload_model FAILED — keeping active config "
+                     f"(version={active_cfg.version}): {e}", exc_info=True)
+
+
+def _handle_cue_rollback(cmd: dict, cameras: dict[int, CameraState],
+                         active_cfg: ActiveConfig, fps: float, width: int, height: int) -> None:
+    """Restore the previously-active config (if any) and atomically re-swap cameras."""
+    if not active_cfg.previous:
+        logger.warning("rollback_model requested but no previous config retained — ignoring.")
+        return
+
+    logger.info(f"rollback_model received — reverting version={active_cfg.version} "
+                f"→ {active_cfg.previous_version}")
+    try:
+        rollback_cfg = active_cfg.previous
+        new_cameras  = _swap_cameras(cameras, rollback_cfg, fps, width, height)
+
+        active_cfg.cfg              = rollback_cfg
+        active_cfg.version          = active_cfg.previous_version
+        active_cfg.previous         = None
+        active_cfg.previous_version = None
+        cameras.clear()
+        cameras.update(new_cameras)
+
+        logger.info(f"rollback_model applied — now running version={active_cfg.version}.")
+    except Exception as e:
+        logger.error(f"rollback_model FAILED — keeping active config: {e}", exc_info=True)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -246,6 +390,9 @@ def main() -> None:
     org_id    = base_cfg["cue_publisher"]["organization_id"]
     device_id = base_cfg["cue_publisher"]["device_id"]
     redis_url = base_cfg["cue_publisher"]["redis_url"]
+
+    # Hold the live config in a mutable holder so hot-reload can swap it in place.
+    active_cfg = ActiveConfig(cfg=base_cfg, version=os.environ.get("MODEL_VERSION") or None)
 
     fps    = float(os.environ.get("FPS_HINT",    "25.0"))
     width  = int(os.environ.get("WIDTH_HINT",  "1920"))
@@ -267,7 +414,7 @@ def main() -> None:
     # ── Initialize one pipeline per camera ───────────────────────────────────
     cameras: dict[int, CameraState] = {}
     for cid in camera_ids:
-        cameras[cid] = _init_camera(cid, base_cfg, fps, width, height)
+        cameras[cid] = _init_camera(cid, active_cfg.cfg, fps, width, height)
 
     # ── Redis connection ──────────────────────────────────────────────────────
     r = redis.from_url(redis_url, decode_responses=True)
@@ -288,6 +435,11 @@ def main() -> None:
     staging_pattern = f"org:{org_id}:base_detection:*"
     pubsub.psubscribe(staging_pattern)
     logger.info(f"Subscribed (staging): {staging_pattern}")
+
+    # Org-level model hot-reload channel (C5) — reload_model / rollback_model commands.
+    reload_channel = f"org:{org_id}:model_reload"
+    pubsub.subscribe(reload_channel)
+    logger.info(f"Subscribed (model reload): {reload_channel}")
 
     logger.info(f"Orchestrator ready — managing {len(cameras)} camera(s): {list(cameras.keys())}")
 
@@ -319,7 +471,7 @@ def main() -> None:
                 # Auto-create pipeline for previously unseen camera (graceful fallback)
                 if camera_id not in cameras:
                     logger.info(f"[camera={camera_id}] First seen — auto-initializing pipeline.")
-                    cameras[camera_id] = _init_camera(camera_id, base_cfg, fps, width, height)
+                    cameras[camera_id] = _init_camera(camera_id, active_cfg.cfg, fps, width, height)
 
                 t0 = time.perf_counter()
                 _handle_frame(msg_data, cameras[camera_id])
@@ -342,7 +494,7 @@ def main() -> None:
                     cmd_data = json.loads(message["data"])
                 except (json.JSONDecodeError, TypeError):
                     continue
-                _handle_command(cmd_data, cameras, base_cfg, fps, width, height)
+                _handle_command(cmd_data, cameras, active_cfg, fps, width, height)
 
         except redis.exceptions.TimeoutError:
             continue

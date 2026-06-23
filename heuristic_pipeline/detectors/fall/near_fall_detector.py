@@ -165,10 +165,14 @@ class NearFallDetector:
             evidence["torso_compression"] = t_comp
             # Accept any compression below 0.95 (torso 5%+ shorter than standing)
             # This is a loose check — the main discriminator is hip_stable
-            torso_check = (t_comp is None or t_comp <= 0.95)
+            # Require REAL torso folding (>=30% shorter than standing). Previously this
+            # defaulted to ALLOW when t_comp was None and only required <=0.95, so an
+            # upright standing person at 25-60 deg fired NEAR_FALL perpetually. Now a bend
+            # must actually fold the torso, which a standing/leaning person does not.
+            torso_check = (t_comp is not None and t_comp <= 0.70)
             evidence["torso_folded"] = torso_check
 
-            bend_signals = bend_angle_pass and hip_stable
+            bend_signals = bend_angle_pass and hip_stable and torso_check
 
         # ── Push bend flag into window so sustained_bending() can check it ────
         # We update the latest entry's is_bending flag.

@@ -195,7 +195,11 @@ class FastApproachDetector(BaseDetector):
         s_score = min(speed / (self.velocity_thresh * 3), 1.0)
         d_score = min(abs(dist_delta) / (self.dist_decrease_thresh * num_frames * 3), 1.0)
         a_score = alignment
-        return s_score * 0.40 + d_score * 0.35 + a_score * 0.25
+        # Cap geometry-only confidence at 0.60: approach speed/alignment ALONE is not
+        # violence (people merely walking toward each other hit 0.94-1.00 here). A HIGH
+        # "violent_interaction" alert requires a real contact cue (push_shove/swing/
+        # grapple) to corroborate at the MS-11 composition layer.
+        return min(s_score * 0.40 + d_score * 0.35 + a_score * 0.25, 0.60)
 
     def _tick_cooldowns(self):
         for k in list(self._cooldown_counters):

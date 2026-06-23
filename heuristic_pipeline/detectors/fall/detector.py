@@ -69,7 +69,12 @@ class FallDetector(BaseDetector):
                     "track_id": t.track_id,
                     "type": cue_type,
                     "path": path,
-                    "confidence": confidence
+                    "confidence": confidence,
+                    # Carry the tracker's bbox so the cue's detector_signals always has a
+                    # renderable box. Without this, near_fall/lying clips rendered
+                    # "Bounding Boxes: 0" (the cross-region DetectionCache lookup misses
+                    # on Nex pose-tracker ids). Format is [x1,y1,x2,y2] frame-pixel coords.
+                    "box": t.box.tolist() if getattr(t, "box", None) is not None else None,
                 }
 
                 existing = next((alert for alert in self._pending_alerts if alert["track_id"] == t.track_id), None)
@@ -88,6 +93,7 @@ class FallDetector(BaseDetector):
                     "track_id": alert["track_id"],
                     "type": alert["type"],
                     "path": alert["path"],
+                    **({"box": alert["box"]} if alert.get("box") is not None else {}),
                 },
             ))
             

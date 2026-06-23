@@ -62,14 +62,14 @@ fall_detection:
   window_seconds: 0.5                # rolling buffer for sustained checks
   lying_sustained_seconds: 0.4
   head_rest_seconds: 0.4
-  near_fall_velocity_seconds: 0.17
-  bend_sustained_seconds: 0.17
-  near_fall_angle_delta_deg_s: 90
+  near_fall_velocity_seconds: 0.33
+  bend_sustained_seconds: 0.5
+  near_fall_angle_delta_deg_s: 180
   lying_score_threshold: 1.5
   lying_vertical_ratio: 0.35
   lying_joint_y_tolerance: 0.15
   aspect_ratio_lying: 1.5
-  near_fall_angle_min: 20
+  near_fall_angle_min: 35
   near_fall_angle_max: 60
   bend_hip_drop_ratio_max: 0.10
   bend_torso_compression_min: 0.30
@@ -117,7 +117,7 @@ cue_publisher:
     head_drop:                0.45
     slumped_posture:          0.45
     leaning_on_surface_or_person: 0.45
-    fast_approach:            0.40
+    fast_approach:            0.65
     crowd_convergence:        0.40
     stumble_recover:          0.35
     push_shove:               0.35

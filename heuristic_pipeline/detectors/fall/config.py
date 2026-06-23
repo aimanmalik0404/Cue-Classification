@@ -23,11 +23,11 @@ LYING_SUSTAINED_SECONDS     = 0.4      # Must hold lying state this long
 HEAD_REST_SECONDS           = 0.4      # Head-on-surface must hold this long
 
 # Near-fall / bend
-NEAR_FALL_VELOCITY_SECONDS  = 0.17     # Window for angular velocity averaging
-BEND_SUSTAINED_SECONDS      = 0.17     # Bend must hold this long
+NEAR_FALL_VELOCITY_SECONDS  = 0.33     # Window for angular velocity averaging (raised to reject normal leaning)
+BEND_SUSTAINED_SECONDS      = 0.5      # Bend must hold this long (raised to reject transient reaches)
 
 # Near-fall angle delta: degrees of tilt per second (not per frame)
-NEAR_FALL_ANGLE_DELTA_DEG_S = 90       # 90 deg/s rapid tilt (= 3deg/frame @30fps)
+NEAR_FALL_ANGLE_DELTA_DEG_S = 180      # 180 deg/s rapid tilt (= 6deg/frame @30fps; 3 was normal-lean speed)
 
 # ─── Lying / Collapsed thresholds ────────────────────────────────────────────
 LYING_SCORE_THRESHOLD   = 1.5          # shoulder_x_span / (vertical_span + 1)
@@ -36,7 +36,7 @@ LYING_JOINT_Y_TOLERANCE = 0.15         # All key joints within 15% of body heigh
 ASPECT_RATIO_LYING      = 1.5          # bbox width/height ratio for lying
 
 # ─── Near-fall thresholds ─────────────────────────────────────────────────────
-NEAR_FALL_ANGLE_MIN         = 20       # Degrees — start of at-risk zone
+NEAR_FALL_ANGLE_MIN         = 35       # Degrees — start of at-risk zone (raised from 20; 20-35 is normal posture)
 NEAR_FALL_ANGLE_MAX         = 60       # Degrees — before full lying
 # NEAR_FALL_ANGLE_DELTA and NEAR_FALL_SCORE_WINDOW are now derived from
 # NEAR_FALL_ANGLE_DELTA_DEG_S and NEAR_FALL_VELOCITY_SECONDS at runtime.

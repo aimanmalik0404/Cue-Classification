@@ -15,9 +15,9 @@ _DEFAULT_FALL_CFG = {
     "window_seconds": 0.5,
     "lying_sustained_seconds": 0.4,
     "head_rest_seconds": 0.4,
-    "near_fall_velocity_seconds": 0.17,
-    "bend_sustained_seconds": 0.17,
-    "near_fall_angle_delta_deg_s": 90,
+    "near_fall_velocity_seconds": 0.33,
+    "bend_sustained_seconds": 0.5,
+    "near_fall_angle_delta_deg_s": 180,
 }
 
 

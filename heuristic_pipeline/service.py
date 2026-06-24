@@ -120,9 +120,29 @@ def _build_base_config(cfg_path: str) -> dict:
 
 
 def _build_camera_config(base_cfg: dict, camera_id: int) -> dict:
-    """Deep-copy base config and inject the camera-specific camera_id."""
+    """Deep-copy base config, inject camera_id, and apply the per-zone crowd threshold.
+
+    The crowd_convergence crowd-size gate (min_crowd_size) is sourced from MS-3 zone
+    settings — the operator-facing "Group Alert Threshold" (group_detection_threshold) —
+    instead of the static YAML, so changing it on the zone takes effect on the cue. Falls
+    back to the YAML default when MS-3 is unreachable / the field is unset. Called once per
+    camera init (not per frame); zone-settings fetches are cached.
+    """
     cfg = copy.deepcopy(base_cfg)
     cfg["cue_publisher"]["camera_id"] = camera_id
+
+    ms3_url = os.environ.get("MS3_URL", "").strip()
+    if ms3_url:
+        org_env = os.environ.get("ORGANIZATION_ID")
+        org_id = int(org_env) if org_env and org_env.strip().isdigit() else None
+        zone = _fetch_zone_settings(ms3_url, camera_id, org_id)
+        gt = zone.get("group_detection_threshold")
+        if isinstance(gt, (int, float)) and gt > 0:
+            cfg.setdefault("crowd_convergence", {})["min_crowd_size"] = int(gt)
+            logger.info(
+                f"[camera={camera_id}] crowd_convergence.min_crowd_size <- zone "
+                f"group_detection_threshold={int(gt)}"
+            )
     return cfg
 
 
@@ -209,6 +229,36 @@ def _fetch_cameras_from_ms3(
     except urllib.error.URLError as e:
         logger.error(f"MS-3 unreachable ({e}). Cannot bootstrap cameras.")
         raise
+
+
+# Per-camera zone-settings cache (camera_id -> settings dict). Avoids a blocking MS-3
+# fetch on every camera (re)init (bootstrap / add_camera / reload swap / first-seen frame).
+_ZONE_SETTINGS_CACHE: dict[int, dict] = {}
+
+
+def _fetch_zone_settings(
+    ms3_url: str, camera_id: int, organization_id: Optional[int] = None
+) -> dict:
+    """Fetch a camera's zone settings from MS-3 (cached, fail-open).
+
+    Source for the per-zone crowd/group threshold. Returns {} on any error/timeout so the
+    caller falls back to the static config default — MS-3 being slow/down must never block
+    or break cue processing.
+    """
+    if camera_id in _ZONE_SETTINGS_CACHE:
+        return _ZONE_SETTINGS_CACHE[camera_id]
+    settings: dict = {}
+    url = f"{ms3_url.rstrip('/')}/api/cameras/{camera_id}/zone-settings"
+    try:
+        req = urllib.request.Request(url, headers=_ms3_headers(organization_id))
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        if isinstance(data, dict):
+            settings = data
+    except Exception as e:  # noqa: BLE001 — fail-open on ANY error (URL, timeout, JSON)
+        logger.warning(f"[camera={camera_id}] zone-settings fetch failed ({e}); using config defaults")
+    _ZONE_SETTINGS_CACHE[camera_id] = settings
+    return settings
 
 
 def _handle_frame(msg_data: dict, state: CameraState) -> None:

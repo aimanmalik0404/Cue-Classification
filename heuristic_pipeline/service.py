@@ -469,7 +469,7 @@ def main() -> None:
     # ── Redis connection ──────────────────────────────────────────────────────
     r = redis.from_url(redis_url, decode_responses=True)
     r.ping()
-    logger.info(f"Connected to Redis at {redis_url}")
+    logger.info(f"Connected to Redis at {redis_url.split("@")[-1]}")
 
     pubsub = r.pubsub(ignore_subscribe_messages=True)
 

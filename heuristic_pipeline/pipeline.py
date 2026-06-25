@@ -36,6 +36,23 @@ class HeuristicPipeline:
         )
         self.alert_mgr.cue_publisher = self.cue_pub
 
+        # Rolling per-track bbox cache. This pipeline instance is per-camera (one per
+        # camera_id) and the service runs a single-threaded message loop, so track_ids never
+        # collide across cameras and the dict needs no locking. MS-1 base_detection is
+        # EVENT-DRIVEN (~10% of frames), and person-level cues (head_drop / slumped_posture /
+        # leaning / fall) fire as WINDOW predictions at the window boundary — so the subject
+        # track is usually ABSENT from the current frame's tracks at fire time. Without this
+        # cache, _attach_track_box can't recover the subject's box, the cue ships with no
+        # coordinates, and MS-11 falls back to an arbitrary window-snapshot person (wrong / no
+        # red box on the alert clip). Keeping each track's most-recently-seen box bridges the
+        # detection gaps so the SUBJECT's box always travels with the cue.
+        self._recent_boxes: dict[int, list] = {}
+        self._recent_box_seen: dict[int, int] = {}
+        # `... or 300` (not a .get default) so a null / blank YAML value falls back too.
+        self._recent_box_ttl_frames = int(
+            cfg.get("pipeline", {}).get("recent_box_ttl_frames") or 300
+        )
+
         # 2. Setup detectors
         self.detectors = {}
         if cfg["fast_approach"]["enabled"]:
@@ -104,6 +121,21 @@ class HeuristicPipeline:
             except (TypeError, ValueError):
                 pass
 
+        # Refresh the rolling cache with this frame's boxes, evict stale tracks, then build a
+        # lookup where the current frame wins but recently-seen boxes fill the gaps. This lets
+        # window-prediction cues whose subject isn't in the current frame still recover the
+        # subject's last-seen box (see __init__ for the why).
+        for tid, box in track_boxes.items():
+            self._recent_boxes[tid] = box
+            self._recent_box_seen[tid] = frame_idx
+        if self._recent_box_ttl_frames > 0 and self._recent_box_seen:
+            stale = [tid for tid, seen in self._recent_box_seen.items()
+                     if frame_idx - seen > self._recent_box_ttl_frames]
+            for tid in stale:
+                self._recent_boxes.pop(tid, None)
+                self._recent_box_seen.pop(tid, None)
+        box_lookup = {**self._recent_boxes, **track_boxes}
+
         for name, results_list in results.items():
             for r_item in results_list:
                 if not r_item.triggered:
@@ -111,7 +143,7 @@ class HeuristicPipeline:
                 if not r_item.metadata.get("is_window_prediction", True):
                     continue
 
-                metadata = self._attach_track_box(r_item.metadata.get("best", r_item.metadata), track_boxes)
+                metadata = self._attach_track_box(r_item.metadata.get("best", r_item.metadata), box_lookup)
 
                 self.alert_mgr.fire(
                     timestamp=timestamp,

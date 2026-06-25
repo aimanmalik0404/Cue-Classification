@@ -56,8 +56,12 @@ class HeadDropDetector(BaseDetector):
         self.motion_gate_enabled = c.get("motion_gate_enabled", True)
         self.motion_energy_threshold = c.get("motion_energy_threshold", 0.012)
         # Lower floor on shoulder width: collapsed shoulders (~0 torso-lengths apart) are a
-        # degenerate/invalid pose, not a hunched person. Guards the primary s1 signal.
-        self.min_sho_width = c.get("min_sho_width", 0.04)
+        # degenerate/invalid pose, not a hunched person. Guards the primary s1 signal as a HARD
+        # gate (returns "degenerate_shoulders" before scoring, so s2/s3 can't bypass it).
+        # Raised 0.04 -> 0.055: a phantom head_drop fired at sho_width=0.0478 on a bottom-corner
+        # artifact (false 'intoxicated', box over the bar). Real head_drops sit at >=0.066, so
+        # this rejects degenerate phantoms while keeping genuine hunched poses.
+        self.min_sho_width = c.get("min_sho_width", 0.055)
         # Frame-edge clip guard: a bbox touching the LEFT/RIGHT frame border has an off-frame
         # shoulder, so shoulder-width (the REQUIRED s1 signal) and nose-vs-shoulder geometry
         # are unreliable — a clipped edge sliver reads as collapsed shoulders -> phantom
@@ -82,7 +86,7 @@ class HeadDropDetector(BaseDetector):
         self.score_threshold = c.get("score_threshold", 0.55)
         self.motion_gate_enabled = c.get("motion_gate_enabled", True)
         self.motion_energy_threshold = c.get("motion_energy_threshold", 0.012)
-        self.min_sho_width = c.get("min_sho_width", 0.04)
+        self.min_sho_width = c.get("min_sho_width", 0.055)
         self.edge_clip_gate_enabled = c.get("edge_clip_gate_enabled", True)
         self.edge_clip_margin_px = c.get("edge_clip_margin_px", 4.0)
         self.edge_clip_margin_frac = c.get("edge_clip_margin_frac", 0.006)

@@ -319,6 +319,7 @@ class HeadDropDetector(BaseDetector):
             "mode": "width+nose",
             "sho_width": mean_width,
             "nose_sho": mean_nose_sho,
+            "ns_change": ns_change,
         }
 
     def draw(self, frame: np.ndarray, result: DetectionResult, tracks: list) -> np.ndarray:

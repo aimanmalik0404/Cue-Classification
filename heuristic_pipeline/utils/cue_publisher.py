@@ -142,7 +142,7 @@ class CuePublisher:
             try:
                 import redis  # type: ignore
                 self._redis = redis.from_url(redis_url)
-                logger.info(f"CuePublisher: Redis connected → {redis_url.split("@")[-1]}")
+                logger.info(f"CuePublisher: Redis connected → {redis_url.split('@')[-1]}")
             except ImportError:
                 logger.warning("CuePublisher: 'redis' package not installed — Redis publish disabled.")
             except Exception as e:

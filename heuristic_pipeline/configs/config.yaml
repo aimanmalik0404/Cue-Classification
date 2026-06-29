@@ -49,7 +49,11 @@ head_drop:
   sho_width_persist: 0.60
   nose_sho_threshold: -0.28
   nose_sho_persist: 0.55
-  nose_sho_change_thr: -0.04
+  # POSITIVE: a head_drop must show the nose actually DROPPING relative to the shoulders
+  # by >=0.04 torso-lengths across the window (s3). Was -0.04, which made s3 true for a
+  # static low head (≈0 change) — so people just looking down at a bar scored 1.0 and
+  # flooded 'intoxicated'. Paired with the detector's hard s3 gate (no drop -> no head_drop).
+  nose_sho_change_thr: 0.04
   trunk_angle_gate: 0.18
   score_threshold: 0.55
   confirm_windows: 1                 # temporal filter: consecutive positive windows

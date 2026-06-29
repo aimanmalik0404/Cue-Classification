@@ -294,6 +294,19 @@ class HeadDropDetector(BaseDetector):
         if not s1_det:
             return False, 0.0, {"status": "no primary signal", "score": 0.0, "mode": "blocked_no_s1"}
 
+        # Require an actual head-DROP EVENT (s3 = nose dropping relative to the shoulders
+        # across the window), not a sustained static low head. A person looking down at a
+        # bar / phone has narrow apparent shoulders (s1) and the nose below the shoulders
+        # (s2) the WHOLE time, but no drop (s3≈0) — that was scoring 0.80 and was the
+        # dominant 'intoxicated' flood on bar cameras (org7/dunkirk head_drop). A genuine
+        # head_drop (nodding off / collapse onset) shows the nose actually dropping; a
+        # sustained low head with no drop is a static posture covered by slumped_posture,
+        # not head_drop. Scoring below is unchanged so confirmed (dynamic) head_drops keep
+        # their exact confidence.
+        if not s3_det:
+            return False, 0.0, {"status": "no drop event", "score": 0.0,
+                                "mode": "blocked_no_s3", "ns_change": ns_change}
+
         score = 0.45
         if s2_det:
             score += 0.35

@@ -191,7 +191,20 @@ class LyingDetector:
             # alert on its own. Require the hip to have genuinely collapsed toward the floor
             # (>=15% of standing height). A passed-out-over-table person is still surfaced by
             # slumped_posture/head_drop cues; a real floor-collapse always drops the hip.
-            hip_collapsed = True  # cannot verify (no standing calibration) -> allow (recall-safe)
+            # Require GENUINE hip collapse toward the floor before the surface_rest
+            # path may declare lying_or_collapsed (which fires a HIGH welfare alert
+            # on its own). Without standing calibration we cannot verify a collapse,
+            # so FAIL CLOSED — previously this defaulted True ("recall-safe"), which
+            # made every head-bowed-over-a-bar/table person a HIGH "intoxicated"
+            # alert on cameras where nobody is ever seen standing (the dominant
+            # false-alarm source on bar/seated cameras). An absolute frame-proximity
+            # proxy was rejected: on those cameras the seated hip already sits at
+            # ~0.80-0.91 of frame height, so it cannot separate a slump from a
+            # collapse. A real floor collapse still fires via PATH A geometry
+            # (horizontal body) or, once the person has been seen upright, via the
+            # calibrated hip-drop check below; a passed-out-over-surface person is
+            # still surfaced by the slumped_posture / head_drop cues.
+            hip_collapsed = False
             _shy = getattr(window, "standing_hip_y_estimate", None)
             _sh = getattr(window, "standing_height_estimate", None)
             if _shy is not None and _sh is not None:

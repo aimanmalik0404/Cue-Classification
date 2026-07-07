@@ -195,11 +195,15 @@ class FastApproachDetector(BaseDetector):
         s_score = min(speed / (self.velocity_thresh * 3), 1.0)
         d_score = min(abs(dist_delta) / (self.dist_decrease_thresh * num_frames * 3), 1.0)
         a_score = alignment
-        # Cap geometry-only confidence at 0.60: approach speed/alignment ALONE is not
-        # violence (people merely walking toward each other hit 0.94-1.00 here). A HIGH
-        # "violent_interaction" alert requires a real contact cue (push_shove/swing/
-        # grapple) to corroborate at the MS-11 composition layer.
-        return min(s_score * 0.40 + d_score * 0.35 + a_score * 0.25, 0.60)
+        # Cap geometry-only confidence at 0.55: approach speed/alignment ALONE is not
+        # violence (people merely walking toward each other hit 0.94-1.00 here). The cap is
+        # held BELOW every MS-11 aggressive_interaction rule threshold (all >=0.60) so
+        # fast_approach is emitted as an informational/corroboration cue but never fires a
+        # violent_interaction alert on its own — a real contact cue (push_shove/swing/
+        # grapple) is still required to escalate at the MS-11 composition layer.
+        # (Was 0.60, which sat ABOVE the old 0.65 publish threshold, so the cue was never
+        # emitted and approach events wrongly surfaced as crowd_convergence. Nex fix 2026-07-07.)
+        return min(s_score * 0.40 + d_score * 0.35 + a_score * 0.25, 0.55)
 
     def _tick_cooldowns(self):
         for k in list(self._cooldown_counters):

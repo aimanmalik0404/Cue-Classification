@@ -33,8 +33,8 @@ crowd_convergence:
   enabled: true
   min_crowd_size: 2                  # minimum number of people to count as a crowd
   convergence_window_seconds: 0.8    # rolling sub-window for distance trend (seconds)
-  distance_decrease_ratio: 0.80      # avg distance must drop to X% of baseline to trigger
-  min_vector_alignment: 0.55         # fraction of crowd vectors that must point inward
+  distance_decrease_ratio: 0.72      # was 0.80 — require a real tightening not mild bunching (Nex crowd_convergence false-positive fix 2026-07-07)
+  min_vector_alignment: 0.70         # was 0.55 — most members must actually converge inward, not a loose 55%
   dbscan_eps_pct: 0.16               # DBSCAN cluster radius: 16% of frame diagonal
   dbscan_min_samples: 2
   alert_cooldown_seconds: 4.0        # seconds
@@ -123,8 +123,8 @@ cue_publisher:
     head_drop:                0.55
     slumped_posture:          0.55
     leaning_on_surface_or_person: 0.55
-    fast_approach:            0.65
-    crowd_convergence:        0.40
+    fast_approach:            0.45      # was 0.65 (ABOVE its own 0.55 conf cap => never emitted). Now emits as an informational cue; stays <0.60 so it never triggers an MS-11 alert rule on its own
+    crowd_convergence:        0.55      # was 0.40 — drop weak/ambiguous convergences (Nex false-positive fix 2026-07-07)
     stumble_recover:          0.35
     push_shove:               0.35
     swing_attempt:            0.35

@@ -3,3 +3,5 @@ __pycache__/
 outputs/
 yolo11n-pose.pt
 .venv/
+data/*
+!data/.gitkeep
